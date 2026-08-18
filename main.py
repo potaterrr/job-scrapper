@@ -5,7 +5,7 @@ import time
 import requests
 
 # Your Make.com Webhook URL
-webhook_url = os.environ.get('WEBHOOK_URL')
+webhook_url = 'https://hook.us2.make.com/x6o3kicj053whas3fg7oj775xa51mvey'
 todays_date = datetime.now().strftime('%Y-%m-%d')
 
 
