@@ -1,5 +1,7 @@
 from datetime import datetime
 import os
+import random
+import time
 import requests
 
 # Your Make.com Webhook URL
@@ -8,8 +10,11 @@ todays_date = datetime.now().strftime('%Y-%m-%d')
 
 
 def fetch_jobs():
-  # Simulating a clean live remote job fetch that avoids local browser dependencies
-  # You can swap this with your specific search endpoint URL or feed
+  # Add a random sleep between 10 and 60 seconds to look natural and avoid bot blocks
+  delay = random.randint(10, 60)
+  print(f'Waiting {delay} seconds before starting...')
+  time.sleep(delay)
+
   print('Fetching live automation job listings...')
 
   # Example live payload structure
