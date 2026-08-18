@@ -1,11 +1,13 @@
 from datetime import datetime
 import os
 import random
+import re
 import time
-from bs4 import BeautifulSoup
+import urllib.request
+import json
 import requests
 
-webhook_url = os.environ.get('WEBHOOK_URL')
+webhook_url = 'https://hook.us2.make.com/x6o3kicj053whas3fg7oj775xa51mvey'
 todays_date = datetime.now().strftime('%Y-%m-%d')
 
 
@@ -29,39 +31,38 @@ def fetch_jobs():
 
   jobs = []
   try:
-    response = requests.get(target_url, headers=headers, timeout=15)
-    if response.status_code == 200:
-      soup = BeautifulSoup(response.text, 'html.parser')
+    req = urllib.request.Request(target_url, headers=headers)
+    with urllib.request.urlopen(req, timeout=15) as response:
+      html_content = response.read().decode('utf-8')
 
-      # Locate job items on OnlineJobs.ph search results
-      # (Targeting individual rows/cards on the search result table)
-      job_rows = soup.select(
-          'tr'
-      )  # Fallback broad selector or specific table rows
+      # Use regex to find job links and titles safely without external parsers
+      # Matching links that look like /jobseekers/job/...
+      pattern = r'<a[^>]+href="(/jobseekers/job/[^"]+)"[^>]*>(.*?)</a>'
+      matches = re.findall(pattern, html_content, re.DOTALL)
 
-      for row in job_rows:
-        link_elem = row.select_one('a[href*="/jobseekers/job/"]')
-        if link_elem:
-          title = link_elem.get_text(strip=True)
-          link = link_elem['href']
-          if not link.startswith('http'):
-            link = 'https://www.onlinejobs.ph' + link
+      for link, title_html in matches:
+        # Clean up HTML tags from the title string
+        clean_title = re.sub(r'<[^>]+>', '', title_html).strip()
+        if not clean_title or len(clean_title) < 3:
+          continue
 
-          # Avoid duplicate entries
-          if not any(j['url'] == link for j in jobs):
-            jobs.append({
-                'jobTitle': title if title else 'Automation Role',
-                'company': 'OnlineJobs.ph Employer',
-                'salary': 'View Listing',
-                'employmentType': 'Remote',
-                'url': link,
-                'datePosted': todays_date,
-                'description': (
-                    'Live scraped listing from OnlineJobs.ph search results.'
-                ),
-            })
-          if len(jobs) >= 5:  # Limit to top 5 jobs per run
-            break
+        full_link = 'https://www.onlinejobs.ph' + link
+
+        # Avoid duplicates
+        if not any(j['url'] == full_link for j in jobs):
+          jobs.append({
+              'jobTitle': clean_title,
+              'company': 'OnlineJobs.ph Employer',
+              'salary': 'View Listing',
+              'employmentType': 'Remote',
+              'url': full_link,
+              'datePosted': todays_date,
+              'description': (
+                  'Live scraped listing from OnlineJobs.ph search results.'
+              ),
+          })
+        if len(jobs) >= 5:  # Limit to top 5 jobs per run
+          break
   except Exception as e:
     print(f'Error scraping OnlineJobs.ph: {e}')
 
