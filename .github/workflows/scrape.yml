@@ -2,7 +2,7 @@ name: Run Job Scraper Hourly
 
 on:
   schedule:
-    - cron: '0 * * * *' # Runs automatically at the 0th minute of every hour
+  - cron: '*/10 * * * *' # Runs automatically at the 0th minute of every hour
   workflow_dispatch: # Allows you to click a button to run it manually anytime!
 
 jobs:
