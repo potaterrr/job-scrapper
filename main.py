@@ -18,6 +18,8 @@ KEYWORDS = ['automation', 'n8n', 'make.com', 'zapier']
 
 MAX_JOBS_PER_KEYWORD = 1  # One job per keyword keeps the Make.com queue light
 
+MAX_DESCRIPTION_CHARS = 600
+
 BASE_URL = 'https://www.onlinejobs.ph'
 HEADERS = {
     'User-Agent': (
@@ -49,6 +51,13 @@ def strip_tags(raw_html):
   text = unescape(text)
   lines = [line.strip() for line in text.split('\n')]
   return re.sub(r'\n{2,}', '\n', '\n'.join(line for line in lines if line)).strip()
+
+
+def truncate_for_telegram(text):
+  if len(text) <= MAX_DESCRIPTION_CHARS:
+    return text
+  cut = text[:MAX_DESCRIPTION_CHARS].rsplit(' ', 1)[0].rstrip()
+  return (cut or text[:MAX_DESCRIPTION_CHARS]) + ' …'
 
 
 def parse_listing_card(block):
@@ -167,8 +176,9 @@ def fetch_jobs():
       # Polite pause before visiting each job page for the full description
       time.sleep(random.randint(2, 5))
       full_description = fetch_full_description(listing['url'])
-      description = full_description or listing['summary'] or \
-          f'Live scraped listing for keyword: {keyword}'
+      description = truncate_for_telegram(
+          full_description or listing['summary'] or
+          f'Live scraped listing for keyword: {keyword}')
 
       jobs.append({
           'jobTitle': listing['title'],
