@@ -3,11 +3,13 @@ import os
 import random
 import re
 import time
+import urllib.parse
 import urllib.request
 import json
+import sys
 import requests
 
-webhook_url = 'https://hook.us2.make.com/x6o3kicj053whas3fg7oj775xa51mvey'
+webhook_url = os.environ.get('WEBHOOK_URL')
 todays_date = datetime.now().strftime('%Y-%m-%d')
 
 
@@ -85,6 +87,11 @@ def fetch_jobs():
 
 
 if __name__ == '__main__':
+  if not webhook_url:
+    print("Error: WEBHOOK_URL environment variable is not set.")
+    print("Set it to your Make.com webhook URL, e.g.:")
+    print('  export WEBHOOK_URL="https://hook.us2.make.com/your-hook-id"')
+    sys.exit(1)
   jobs = fetch_jobs()
   if not jobs:
     print('No jobs found.')
