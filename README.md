@@ -56,7 +56,6 @@ All configuration lives in `main.py`:
 |---|---|---|
 | Search keywords | `KEYWORDS` list (top of `main.py`) | `automation`, `n8n`, `make.com`, `zapier` |
 | Jobs kept per keyword | `MAX_JOBS_PER_KEYWORD` | `1` |
-| Description length cap | `DESCRIPTION_MAX_CHARS` | `600` |
 | Webhook URL | `WEBHOOK_URL` environment variable | — (required) |
 
 ## Automated Runs (GitHub Actions)
@@ -78,6 +77,6 @@ The included workflow [`.github/workflows/scrape.yml`](.github/workflows/scrape.
 
 - Listings are parsed with regex over raw HTML; if OnlineJobs.ph changes its markup, the scraper may return zero results (the fallback link will be sent instead).
 - OnlineJobs.ph hides employer names from logged-out visitors; the real company name is only included when the listing shows an employer logo — otherwise it falls back to `OnlineJobs.ph Employer`.
-- Descriptions are truncated to 600 characters to keep webhook payloads notification-friendly.
+- Descriptions are sent in full (tags stripped, whitespace cleaned), ready to be passed through an AI step for proposal generation.
 - Each run makes one extra request per job (for the full description); the random delays keep this polite for the site.
 - Keep the per-keyword cap and random delays in place to avoid hammering the site or spamming your connected automations.

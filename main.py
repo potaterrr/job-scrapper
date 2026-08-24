@@ -17,7 +17,6 @@ todays_date = datetime.now().strftime('%Y-%m-%d')
 KEYWORDS = ['automation', 'n8n', 'make.com', 'zapier']
 
 MAX_JOBS_PER_KEYWORD = 1  # One job per keyword keeps the Make.com queue light
-DESCRIPTION_MAX_CHARS = 600
 
 BASE_URL = 'https://www.onlinejobs.ph'
 HEADERS = {
@@ -44,13 +43,6 @@ def strip_tags(raw_html):
   text = unescape(text)
   lines = [line.strip() for line in text.split('\n')]
   return re.sub(r'\n{2,}', '\n', '\n'.join(line for line in lines if line)).strip()
-
-
-def truncate(text, limit=DESCRIPTION_MAX_CHARS):
-  if len(text) <= limit:
-    return text
-  cut = text[:limit].rsplit(' ', 1)[0].rstrip(' \n')
-  return cut + '\u2026'
 
 
 def parse_listing_card(block):
@@ -145,7 +137,7 @@ def fetch_jobs():
           'employmentType': listing['employmentType'] or 'Remote',
           'url': listing['url'],
           'datePosted': todays_date,
-          'description': truncate(description),
+          'description': description,
       })
       keyword_count += 1
 
