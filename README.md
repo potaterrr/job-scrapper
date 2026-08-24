@@ -6,7 +6,7 @@ A Python scraper that searches [OnlineJobs.ph](https://www.onlinejobs.ph) for re
 
 1. Searches OnlineJobs.ph for each keyword in the `KEYWORDS` list.
 2. Waits a random 5–12 seconds between searches to mimic human browsing.
-3. Extracts from each results-page card: job title, salary, employment type, employer name (when shown), and link — top **3 per keyword**, deduplicated across keywords.
+3. Extracts from each results-page card: job title, salary, employment type, employer name (when shown), and link — top **1 per keyword** (deduplicated across keywords), so each keyword contributes at most one notification per run.
 4. Visits each listing's page (with a polite 2–5 second pause) to pull the **full job description**.
 5. POSTs each listing as JSON to your Make.com webhook.
 6. If no listings are found, sends a single fallback search link so downstream automations never stall.
@@ -55,7 +55,7 @@ All configuration lives in `main.py`:
 | Setting | Location | Default |
 |---|---|---|
 | Search keywords | `KEYWORDS` list (top of `main.py`) | `automation`, `n8n`, `make.com`, `zapier` |
-| Jobs kept per keyword | `MAX_JOBS_PER_KEYWORD` | `3` |
+| Jobs kept per keyword | `MAX_JOBS_PER_KEYWORD` | `1` |
 | Description length cap | `DESCRIPTION_MAX_CHARS` | `600` |
 | Webhook URL | `WEBHOOK_URL` environment variable | — (required) |
 

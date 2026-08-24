@@ -16,7 +16,7 @@ todays_date = datetime.now().strftime('%Y-%m-%d')
 # Define your keywords list here
 KEYWORDS = ['automation', 'n8n', 'make.com', 'zapier']
 
-MAX_JOBS_PER_KEYWORD = 3  # Limit per keyword to prevent spamming Telegram
+MAX_JOBS_PER_KEYWORD = 1  # One job per keyword keeps the Make.com queue light
 DESCRIPTION_MAX_CHARS = 600
 
 BASE_URL = 'https://www.onlinejobs.ph'
