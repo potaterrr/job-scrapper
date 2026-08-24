@@ -4,11 +4,12 @@ A Python scraper that searches [OnlineJobs.ph](https://www.onlinejobs.ph) for re
 
 ## How It Works
 
-1. Searches OnlineJobs.ph for each keyword in the `keywords` list.
+1. Searches OnlineJobs.ph for each keyword in the `KEYWORDS` list.
 2. Waits a random 5–12 seconds between searches to mimic human browsing.
-3. Extracts job titles and links from the results page (top **3 per keyword**, deduplicated across keywords).
-4. POSTs each listing as JSON to your Make.com webhook.
-5. If no listings are found, sends a single fallback search link so downstream automations never stall.
+3. Extracts from each results-page card: job title, salary, employment type, employer name (when shown), and link — top **3 per keyword**, deduplicated across keywords.
+4. Visits each listing's page (with a polite 2–5 second pause) to pull the **full job description**.
+5. POSTs each listing as JSON to your Make.com webhook.
+6. If no listings are found, sends a single fallback search link so downstream automations never stall.
 
 ### Webhook Payload
 
@@ -16,13 +17,13 @@ Each job is sent individually with this shape:
 
 ```json
 {
-  "jobTitle": "Automation Specialist",
-  "company": "OnlineJobs.ph Employer",
-  "salary": "View Listing",
-  "employmentType": "Remote",
+  "jobTitle": "Senior Digital Marketing, AI Content & E-Commerce Manager",
+  "company": "MadeEA",
+  "salary": "$1200/month",
+  "employmentType": "Full Time",
   "url": "https://www.onlinejobs.ph/jobseekers/job/12345",
   "datePosted": "2026-08-24",
-  "description": "Live scraped listing for keyword: automation"
+  "description": "About the Role\nWe are an established and growing…"
 }
 ```
 
@@ -53,8 +54,9 @@ All configuration lives in `main.py`:
 
 | Setting | Location | Default |
 |---|---|---|
-| Search keywords | `keywords` list inside `fetch_jobs()` | `automation`, `n8n`, `make.com`, `zapier` |
-| Jobs kept per keyword | `keyword_count` limit in `fetch_jobs()` | `3` |
+| Search keywords | `KEYWORDS` list (top of `main.py`) | `automation`, `n8n`, `make.com`, `zapier` |
+| Jobs kept per keyword | `MAX_JOBS_PER_KEYWORD` | `3` |
+| Description length cap | `DESCRIPTION_MAX_CHARS` | `600` |
 | Webhook URL | `WEBHOOK_URL` environment variable | — (required) |
 
 ## Automated Runs (GitHub Actions)
@@ -75,5 +77,7 @@ The included workflow [`.github/workflows/scrape.yml`](.github/workflows/scrape.
 ## Notes & Limitations
 
 - Listings are parsed with regex over raw HTML; if OnlineJobs.ph changes its markup, the scraper may return zero results (the fallback link will be sent instead).
-- The company name and salary are placeholders (`OnlineJobs.ph Employer`, `View Listing`) since they are not extracted from the listing page.
+- OnlineJobs.ph hides employer names from logged-out visitors; the real company name is only included when the listing shows an employer logo — otherwise it falls back to `OnlineJobs.ph Employer`.
+- Descriptions are truncated to 600 characters to keep webhook payloads notification-friendly.
+- Each run makes one extra request per job (for the full description); the random delays keep this polite for the site.
 - Keep the per-keyword cap and random delays in place to avoid hammering the site or spamming your connected automations.
