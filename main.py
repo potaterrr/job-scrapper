@@ -23,7 +23,13 @@ HEADERS = {
     'User-Agent': (
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,'
         ' like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    )
+    ),
+    'Accept': (
+        'text/html,application/xhtml+xml,application/xml;q=0.9,'
+        'image/avif,image/webp,*/*;q=0.8'
+    ),
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Referer': BASE_URL + '/',
 }
 
 
@@ -85,15 +91,49 @@ def parse_search_results(html_content):
   return listings
 
 
-def fetch_full_description(job_url):
-  try:
-    page_html = http_get(job_url)
-    match = re.search(r'<p id="job-description"[^>]*>(.*?)</p>', page_html, re.DOTALL)
-    if match:
-      return strip_tags(match.group(1))
-  except Exception as e:
-    print(f'Could not fetch job details for {job_url}: {e}')
+def looks_like_bot_check(page_html):
+  # Interstitial/block markers; note 'challenge-platform' also appears on
+  # legitimate pages, so it must NOT be treated as a block signal by itself
+  return any(
+      marker in page_html
+      for marker in ('Just a moment', 'Attention Required', 'cf-error-code')
+  )
+
+
+def fetch_full_description(job_url, attempts=4):
+  for attempt in range(1, attempts + 1):
+    try:
+      page_html = http_get(job_url)
+      match = re.search(r'<p id="job-description"[^>]*>(.*?)</p>', page_html, re.DOTALL)
+      if match:
+        description = strip_tags(match.group(1))
+        if description:
+          return description
+      if looks_like_bot_check(page_html):
+        print(f'Attempt {attempt}: bot-check page served instead of job page.')
+      else:
+        print(f'Attempt {attempt}: description block not found (page fetched).')
+    except Exception as e:
+      print(f'Attempt {attempt}: could not fetch {job_url}: {e}')
+    if attempt < attempts:
+      # Blocks are transient rate limits; waiting longer helps
+      time.sleep(random.randint(10, 20))
+  print(f'WARNING: full description unavailable for {job_url}; sending listing teaser.')
   return ''
+
+
+def fetch_search_results(target_url, attempts=3):
+  for attempt in range(1, attempts + 1):
+    try:
+      listings = parse_search_results(http_get(target_url))
+      if listings:
+        return listings
+      print(f'Attempt {attempt}: no listings parsed (page may have been blocked).')
+    except Exception as e:
+      print(f'Attempt {attempt}: could not fetch search results: {e}')
+    if attempt < attempts:
+      time.sleep(random.randint(8, 15))
+  return []
 
 
 def fetch_jobs():
@@ -109,7 +149,7 @@ def fetch_jobs():
     target_url = f'{BASE_URL}/jobseekers/jobsearch?jobkeyword={urllib.parse.quote(keyword)}'
 
     try:
-      listings = parse_search_results(http_get(target_url))
+      listings = fetch_search_results(target_url)
     except Exception as e:
       print(f'Error scraping keyword {keyword}: {e}')
       continue

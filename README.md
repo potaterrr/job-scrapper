@@ -79,4 +79,5 @@ The included workflow [`.github/workflows/scrape.yml`](.github/workflows/scrape.
 - OnlineJobs.ph hides employer names from logged-out visitors; the real company name is only included when the listing shows an employer logo — otherwise it falls back to `OnlineJobs.ph Employer`.
 - Descriptions are sent in full (tags stripped, whitespace cleaned), ready to be passed through an AI step for proposal generation.
 - Each run makes one extra request per job (for the full description); the random delays keep this polite for the site.
+- OnlineJobs.ph occasionally rate-limits into temporary bot-checks; both search and description fetches retry several times with growing waits before falling back (warnings appear in the Actions log when a teaser is sent instead of the full text).
 - Keep the per-keyword cap and random delays in place to avoid hammering the site or spamming your connected automations.
