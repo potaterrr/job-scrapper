@@ -46,7 +46,7 @@ Each job is sent individually with this shape:
 - `rate` / `salary` — the hourly/monthly rate exactly as shown on the listing card (`salary` kept for backward compatibility with existing Make scenarios)
 - `howToApply` — the employer's application instructions, split out of the description when the listing has a "How to Apply" section (empty otherwise)
 - `description` — capped at 600 chars (word-boundary cut); `howToApply` at 300
-- `postedAt` — exact posting timestamp, so Make can filter for freshness
+- `datePosted` / `postedAt` — the **real posting timestamp** from the listing card, so Make (and you) can judge freshness; both are empty when a card hides it — never faked to today
 
 ## Local Usage
 
@@ -65,7 +65,8 @@ Requirements: Python 3.8+ and `requests`.
 
 ## Schedule
 
-GitHub Actions runs the scraper **daily at 22:30 UTC (06:30 PHT)** — see `.github/workflows/scrape.yml`. You can also trigger it manually from the Actions tab (*Run workflow*).
+GitHub Actions runs the scraper **daily at 22:30 UTC (06:30 PHT)** — see `.github/workflows/scrape.yml`.
+The webhook URL is read from the **`SCRAPE_HOOK`** repository secret (Settings → Secrets and variables → Actions). You can also trigger it manually from the Actions tab (*Run workflow*).
 
 ## Fair-Use & TOS Notes
 
@@ -82,5 +83,4 @@ If OnlineJobs.ph ever indicates automated access is unwelcome, discontinue the s
 ## Repository Layout
 
 - `main.py` — the scraper (requests-only; this is what CI runs)
-- `scraper_onlinejobsph/` — legacy Scrapy project (kept for reference; not used by CI)
 - `.github/workflows/scrape.yml` — daily schedule + manual dispatch

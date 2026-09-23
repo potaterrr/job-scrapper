@@ -205,7 +205,9 @@ def build_job(listing, category, full_description):
       'salary': listing['rate'] or 'See listing',
       'employmentType': listing['employmentType'] or 'Remote',
       'url': listing['url'],
-      'datePosted': posted.strftime('%Y-%m-%d') if posted else TODAY,
+      # Real posting timestamp from the listing card - empty (never faked)
+      # when the card hides it, so 'latest' judgements stay honest
+      'datePosted': posted.strftime('%Y-%m-%d') if posted else '',
       'postedAt': posted.strftime('%Y-%m-%d %H:%M:%S') if posted else '',
       'description': truncate(description or f'Live scraped listing for {category}.',
                               MAX_DESCRIPTION_CHARS),

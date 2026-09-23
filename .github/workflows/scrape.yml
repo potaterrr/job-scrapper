@@ -24,7 +24,7 @@ jobs:
 
       - name: Run Scraper Script
         env:
-          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+          WEBHOOK_URL: ${{ secrets.SCRAPE_HOOK }}
           CATEGORIES: ${{ vars.CATEGORIES }}
           MAX_PER_CATEGORY: ${{ vars.MAX_PER_CATEGORY }}
         run: |
