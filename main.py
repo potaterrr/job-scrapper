@@ -29,7 +29,18 @@ BASE_URL = 'https://www.onlinejobs.ph'
 TODAY = datetime.now().strftime('%Y-%m-%d')
 
 DEFAULT_CATEGORIES = 'automation;n8n;make.com;zapier|python|customer support;email support;chat support|virtual assistant'
-MAX_PER_CATEGORY = int(os.environ.get('MAX_PER_CATEGORY', '1'))
+
+
+def _env_int(name, default):
+  """Read an int env var, treating empty/unset as the default."""
+  raw = (os.environ.get(name) or '').strip()
+  try:
+    return int(raw) if raw else default
+  except ValueError:
+    return default
+
+
+MAX_PER_CATEGORY = _env_int('MAX_PER_CATEGORY', 1)
 MAX_DESCRIPTION_CHARS = 600
 MAX_HOWTO_CHARS = 300
 
@@ -264,7 +275,7 @@ def main():
     print("Or set DRY_RUN=1 to preview payloads without sending.")
     sys.exit(1)
 
-  categories = load_categories(os.environ.get('CATEGORIES', DEFAULT_CATEGORIES))
+  categories = load_categories(os.environ.get('CATEGORIES') or DEFAULT_CATEGORIES)
   print(f'Categories: {", ".join(name for name, _ in categories)}'
         f' | max {MAX_PER_CATEGORY} per category')
   jobs = fetch_jobs(categories)

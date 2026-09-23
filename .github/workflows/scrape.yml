@@ -25,7 +25,7 @@ jobs:
       - name: Run Scraper Script
         env:
           WEBHOOK_URL: ${{ secrets.SCRAPE_HOOK }}
-          CATEGORIES: ${{ vars.CATEGORIES }}
-          MAX_PER_CATEGORY: ${{ vars.MAX_PER_CATEGORY }}
+          CATEGORIES: ${{ vars.CATEGORIES || 'automation;n8n;make.com;zapier|python|customer support;email support;chat support|virtual assistant' }}
+          MAX_PER_CATEGORY: ${{ vars.MAX_PER_CATEGORY || '1' }}
         run: |
           python main.py
