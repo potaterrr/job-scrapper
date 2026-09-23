@@ -1,8 +1,8 @@
-name: Run Job Scraper Hourly
+name: Run Job Scraper Daily
 
 on:
   schedule:
-  - cron: '0 */4 * * *' # Runs automatically every 4 hours at the top of the hour
+  - cron: '30 22 * * *' # 06:30 PHT every day (22:30 UTC)
   workflow_dispatch: # Allows you to click a button to run it manually anytime!
 
 jobs:
@@ -25,5 +25,7 @@ jobs:
       - name: Run Scraper Script
         env:
           WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+          CATEGORIES: ${{ vars.CATEGORIES }}
+          MAX_PER_CATEGORY: ${{ vars.MAX_PER_CATEGORY }}
         run: |
           python main.py

@@ -1,26 +1,38 @@
+"""OnlineJobs.ph -> Make.com job scraper.
+
+Polite by design: public pages only (no login, no paywalled data), real
+browser headers, randomized human-like delays, tiny daily volume, and
+honest backoff-and-retry when the site serves a transient block page.
+
+Config via environment variables:
+  CATEGORIES        Pipe-separated categories, semicolon-separated keywords
+                    inside each. First keyword names the category.
+                    Default: automation;n8n;make.com;zapier|python|customer support;email support;chat support|virtual assistant
+  MAX_PER_CATEGORY  Jobs kept per category per run (default 1)
+  WEBHOOK_URL       Make.com webhook to POST each job to (required unless DRY_RUN=1)
+  DRY_RUN           Set to 1 to print payloads instead of sending them
+"""
 from datetime import datetime
+from html import unescape
+import json
 import os
 import random
 import re
+import sys
 import time
 import urllib.parse
 import urllib.request
-import sys
-from html import unescape
 
 import requests
 
-webhook_url = os.environ.get('WEBHOOK_URL')
-todays_date = datetime.now().strftime('%Y-%m-%d')
-
-# Define your keywords list here
-KEYWORDS = ['automation', 'n8n', 'make.com', 'zapier']
-
-MAX_JOBS_PER_KEYWORD = 1  # One job per keyword keeps the Make.com queue light
-
-MAX_DESCRIPTION_CHARS = 600
-
 BASE_URL = 'https://www.onlinejobs.ph'
+TODAY = datetime.now().strftime('%Y-%m-%d')
+
+DEFAULT_CATEGORIES = 'automation;n8n;make.com;zapier|python|customer support;email support;chat support|virtual assistant'
+MAX_PER_CATEGORY = int(os.environ.get('MAX_PER_CATEGORY', '1'))
+MAX_DESCRIPTION_CHARS = 600
+MAX_HOWTO_CHARS = 300
+
 HEADERS = {
     'User-Agent': (
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,'
@@ -33,6 +45,16 @@ HEADERS = {
     'Accept-Language': 'en-US,en;q=0.9',
     'Referer': BASE_URL + '/',
 }
+
+
+def load_categories(raw):
+  """'automation;n8n|python|virtual assistant' -> [('automation', [..]), ('python', [..]), ...]"""
+  categories = []
+  for group in raw.split('|'):
+    keywords = [k.strip().lower() for k in group.split(';') if k.strip()]
+    if keywords:
+      categories.append((keywords[0], keywords))
+  return categories
 
 
 def http_get(url, timeout=15):
@@ -53,11 +75,15 @@ def strip_tags(raw_html):
   return re.sub(r'\n{2,}', '\n', '\n'.join(line for line in lines if line)).strip()
 
 
-def truncate_for_telegram(text):
-  if len(text) <= MAX_DESCRIPTION_CHARS:
-    return text
-  cut = text[:MAX_DESCRIPTION_CHARS].rsplit(' ', 1)[0].rstrip()
-  return (cut or text[:MAX_DESCRIPTION_CHARS]) + ' …'
+def parse_posted(block):
+  """Card timestamp ('Posted on 2026-09-23 13:49:33') -> datetime, newest-first sorting."""
+  match = re.search(r'Posted on\s*(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})', block)
+  if not match:
+    return None
+  try:
+    return datetime.strptime(match.group(1), '%Y-%m-%d %H:%M:%S')
+  except ValueError:
+    return None
 
 
 def parse_listing_card(block):
@@ -85,9 +111,11 @@ def parse_listing_card(block):
       'url': BASE_URL + link_match.group(1),
       'title': clean_title,
       'employmentType': strip_tags(badge_match.group(1)) if badge_match else '',
-      'salary': strip_tags(salary_match.group(1)) if salary_match else '',
+      # Rate as shown on the card, e.g. "$444.50 PHP Per Hour"
+      'rate': strip_tags(salary_match.group(1)) if salary_match else '',
       'summary': strip_tags(desc_match.group(1)) if desc_match else '',
       'company': company_match.group(1).strip() if company_match else '',
+      'postedAt': parse_posted(block),
   }
 
 
@@ -97,6 +125,8 @@ def parse_search_results(html_content):
     listing = parse_listing_card(block)
     if listing:
       listings.append(listing)
+  # Most recent postings first; cards without a timestamp sink to the end
+  listings.sort(key=lambda l: l['postedAt'] or datetime.min, reverse=True)
   return listings
 
 
@@ -131,6 +161,23 @@ def fetch_full_description(job_url, attempts=4):
   return ''
 
 
+def split_how_to_apply(description):
+  """Peel the employer's 'How to Apply' section out of the description."""
+  match = re.search(r'\bhow\s*to\s*apply\b[^:\n]*:?\s*', description, re.IGNORECASE)
+  if not match or match.start() < 20:
+    return description, ''
+  how_to = description[match.end():].strip(' -\n')
+  lead = description[:match.start()].rstrip(' -\n')
+  return (lead or description), how_to
+
+
+def truncate(text, limit):
+  if len(text) <= limit:
+    return text
+  cut = text[:limit].rsplit(' ', 1)[0].rstrip()
+  return (cut or text[:limit]) + ' …'
+
+
 def fetch_search_results(target_url, attempts=3):
   for attempt in range(1, attempts + 1):
     try:
@@ -145,79 +192,108 @@ def fetch_search_results(target_url, attempts=3):
   return []
 
 
-def fetch_jobs():
+def build_job(listing, category, full_description):
+  description, how_to_apply = split_how_to_apply(full_description or listing['summary'])
+  posted = listing['postedAt']
+  return {
+      'jobTitle': listing['title'],
+      'company': listing['company'] or 'OnlineJobs.ph Employer',
+      'category': category,
+      # Both keys carry the card rate (e.g. "$444.50 PHP Per Hour");
+      # 'salary' kept for backward compatibility with existing Make scenarios
+      'rate': listing['rate'] or 'See listing',
+      'salary': listing['rate'] or 'See listing',
+      'employmentType': listing['employmentType'] or 'Remote',
+      'url': listing['url'],
+      'datePosted': posted.strftime('%Y-%m-%d') if posted else TODAY,
+      'postedAt': posted.strftime('%Y-%m-%d %H:%M:%S') if posted else '',
+      'description': truncate(description or f'Live scraped listing for {category}.',
+                              MAX_DESCRIPTION_CHARS),
+      'howToApply': truncate(how_to_apply, MAX_HOWTO_CHARS) if how_to_apply else '',
+  }
+
+
+def fetch_jobs(categories):
   jobs = []
   seen_urls = set()
 
-  for keyword in KEYWORDS:
-    # Add a short random sleep between each keyword search to look natural
-    delay = random.randint(5, 12)
-    time.sleep(delay)
-
-    print(f'Fetching live listings for keyword: {keyword}...')
-    target_url = f'{BASE_URL}/jobseekers/jobsearch?jobkeyword={urllib.parse.quote(keyword)}'
-
-    try:
-      listings = fetch_search_results(target_url)
-    except Exception as e:
-      print(f'Error scraping keyword {keyword}: {e}')
-      continue
-
-    keyword_count = 0
-    for listing in listings:
-      if keyword_count >= MAX_JOBS_PER_KEYWORD:
-        break
-
-      # Avoid duplicate entries across keywords
-      if listing['url'] in seen_urls:
+  for category, keywords in categories:
+    picked = []
+    for keyword in keywords:
+      # Random short sleep between searches to look natural
+      time.sleep(random.randint(5, 12))
+      print(f'[{category}] searching: {keyword} ...')
+      target_url = (f'{BASE_URL}/jobseekers/jobsearch?jobkeyword='
+                    + urllib.parse.quote(keyword))
+      try:
+        listings = fetch_search_results(target_url)
+      except Exception as e:
+        print(f'Error scraping keyword {keyword}: {e}')
         continue
-      seen_urls.add(listing['url'])
 
+      for listing in listings:
+        if listing['url'] in seen_urls:
+          continue
+        seen_urls.add(listing['url'])
+        picked.append(listing)
+        break  # newest listing for this keyword
+
+    # Newest first across the category's keywords, capped per category
+    picked.sort(key=lambda l: l['postedAt'] or datetime.min, reverse=True)
+    picked = picked[:MAX_PER_CATEGORY]
+
+    for listing in picked:
       # Polite pause before visiting each job page for the full description
       time.sleep(random.randint(2, 5))
       full_description = fetch_full_description(listing['url'])
-      description = truncate_for_telegram(
-          full_description or listing['summary'] or
-          f'Live scraped listing for keyword: {keyword}')
-
-      jobs.append({
-          'jobTitle': listing['title'],
-          'company': listing['company'] or 'OnlineJobs.ph Employer',
-          'salary': listing['salary'] or 'View Listing',
-          'employmentType': listing['employmentType'] or 'Remote',
-          'url': listing['url'],
-          'datePosted': todays_date,
-          'description': description,
-      })
-      keyword_count += 1
-
-  # Fallback safety net if no jobs are returned
-  if not jobs:
-    print('Using dynamic fallback job link...')
-    jobs.append({
-        'jobTitle': 'Automation & Workflow Specialist (Fallback)',
-        'company': 'OnlineJobs.ph Direct',
-        'salary': 'Competitive',
-        'employmentType': 'Full Time',
-        'url': f'{BASE_URL}/jobseekers/jobsearch?jobkeyword=automation',
-        'datePosted': todays_date,
-        'description': 'Live check finished. Click to view all live matches.',
-    })
+      jobs.append(build_job(listing, category, full_description))
+      print(f"[{category}] picked: {listing['title']} ({listing['url']})")
 
   return jobs
 
 
-if __name__ == '__main__':
-  if not webhook_url:
+def main():
+  dry_run = os.environ.get('DRY_RUN') == '1'
+  webhook_url = os.environ.get('WEBHOOK_URL')
+  if not webhook_url and not dry_run:
     print("Error: WEBHOOK_URL environment variable is not set.")
     print("Set it to your Make.com webhook URL, e.g.:")
     print('  export WEBHOOK_URL="https://hook.us2.make.com/your-hook-id"')
+    print("Or set DRY_RUN=1 to preview payloads without sending.")
     sys.exit(1)
-  jobs = fetch_jobs()
+
+  categories = load_categories(os.environ.get('CATEGORIES', DEFAULT_CATEGORIES))
+  print(f'Categories: {", ".join(name for name, _ in categories)}'
+        f' | max {MAX_PER_CATEGORY} per category')
+  jobs = fetch_jobs(categories)
+
   if not jobs:
     print('No jobs found.')
-  else:
-    print(f'Sending {len(jobs)} jobs to Make.com...')
-    for job in jobs:
-      response = requests.post(webhook_url, json=job)
-      print(f"Sent: {job['jobTitle']} | Status: {response.status_code}")
+    if dry_run:
+      return
+    # Fallback safety net so downstream automations never stall
+    jobs.append({
+        'jobTitle': 'Job Scraper Fallback',
+        'company': 'OnlineJobs.ph Direct',
+        'category': 'fallback',
+        'rate': 'Competitive',
+        'salary': 'Competitive',
+        'employmentType': 'Remote',
+        'url': f'{BASE_URL}/jobseekers/jobsearch?jobkeyword=automation',
+        'datePosted': TODAY,
+        'postedAt': '',
+        'description': 'Live check finished. Click to view all live matches.',
+        'howToApply': '',
+    })
+
+  print(f'Sending {len(jobs)} jobs to Make.com...')
+  for job in jobs:
+    if dry_run:
+      print(json.dumps(job, indent=2))
+      continue
+    response = requests.post(webhook_url, json=job, timeout=30)
+    print(f"Sent: {job['jobTitle']} | Status: {response.status_code}")
+
+
+if __name__ == '__main__':
+  main()

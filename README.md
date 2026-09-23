@@ -1,83 +1,86 @@
 # job-scrapper
 
-A Python scraper that searches [OnlineJobs.ph](https://www.onlinejobs.ph) for remote job listings matching configured keywords (e.g. `automation`, `n8n`, `make.com`, `zapier`) and pushes each result as JSON to a Make.com webhook for downstream automation (e.g. Telegram notifications).
+A Python scraper that searches [OnlineJobs.ph](https://www.onlinejobs.ph) for the **most recent** remote job postings across configurable **categories** — automation, Python, customer email/chat support, and general VA by default — and pushes each pick as JSON to a Make.com webhook for downstream automation.
+
+Runs **once a day** on GitHub Actions (06:30 PHT) and stays politely under the radar: public pages only, human-like delays, tiny volume.
 
 ## How It Works
 
-1. Searches OnlineJobs.ph for each keyword in the `KEYWORDS` list.
-2. Waits a random 5–12 seconds between searches to mimic human browsing.
-3. Extracts from each results-page card: job title, salary, employment type, employer name (when shown), and link — top **1 per keyword** (deduplicated across keywords), so each keyword contributes at most one notification per run.
-4. Visits each listing's page (with a polite 2–5 second pause) to pull the **full job description**.
-5. POSTs each listing as JSON to your Make.com webhook.
-6. If no listings are found, sends a single fallback search link so downstream automations never stall.
+1. For each **category**, searches OnlineJobs.ph for each of its keywords (random 5–12s pause between searches).
+2. Parses every result card and **sorts by the exact posting timestamp** (`Posted on 2026-09-23 13:49:33`), so the newest listing wins.
+3. Keeps the top listing per keyword, dedupes across keywords, caps at `MAX_PER_CATEGORY` per category (newest first).
+4. Visits each picked listing (polite 2–5s pause) and pulls the **full description**, splitting out the employer's **"How to Apply"** section when present.
+5. POSTs each job as JSON to your Make.com webhook.
+6. If nothing is found, sends a single fallback search link so downstream automations never stall.
 
-### Webhook Payload
+## Categories
+
+Categories come from the `CATEGORIES` env var: **pipe** `|` separates categories, **semicolon** `;` separates keywords inside a category. The first keyword names the category.
+
+```
+automation;n8n;make.com;zapier|python|customer support;email support;chat support|virtual assistant
+```
+
+That default = 4 categories: `automation`, `python`, `customer support`, `virtual assistant`. Edit it in **Settings → Secrets and variables → Actions → Variables** (`CATEGORIES`, `MAX_PER_CATEGORY`) — no code changes needed.
+
+## Webhook Payload
 
 Each job is sent individually with this shape:
 
 ```json
 {
-  "jobTitle": "Senior Digital Marketing, AI Content & E-Commerce Manager",
-  "company": "MadeEA",
-  "salary": "$1200/month",
-  "employmentType": "Full Time",
-  "url": "https://www.onlinejobs.ph/jobseekers/job/12345",
-  "datePosted": "2026-08-24",
-  "description": "About the Role\nWe are an established and growing…"
+  "jobTitle": "Graphic Designer, Marketing & Operations Coordinator",
+  "company": "OnlineJobs.ph Employer",
+  "category": "automation",
+  "rate": "$444.50 PHP Per Hour",
+  "salary": "$444.50 PHP Per Hour",
+  "employmentType": "Part Time",
+  "url": "https://www.onlinejobs.ph/jobseekers/job/…-1736482",
+  "datePosted": "2026-09-23",
+  "postedAt": "2026-09-23 13:49:33",
+  "description": "The Opportunity\nAre you a mid-level designer…",
+  "howToApply": "Please submit:\n● Your Resume and a short video…"
 }
 ```
 
-## Requirements
-
-- Python 3.8+ (CI uses 3.11)
-- [`requests`](https://pypi.org/project/requests/)
+- `rate` / `salary` — the hourly/monthly rate exactly as shown on the listing card (`salary` kept for backward compatibility with existing Make scenarios)
+- `howToApply` — the employer's application instructions, split out of the description when the listing has a "How to Apply" section (empty otherwise)
+- `description` — capped at 600 chars (word-boundary cut); `howToApply` at 300
+- `postedAt` — exact posting timestamp, so Make can filter for freshness
 
 ## Local Usage
 
 ```bash
-git clone https://github.com/<your-username>/job-scrapper.git
-cd job-scrapper
-
-pip install requests
-
-# Required: your Make.com webhook URL
 export WEBHOOK_URL="https://hook.us2.make.com/your-hook-id"
+python main.py                       # default categories, 1 per category
 
-python main.py
+# Preview payloads without sending anything:
+DRY_RUN=1 python main.py
+
+# Custom categories and caps:
+CATEGORIES="python coder|customer support;chat support" MAX_PER_CATEGORY=2 python main.py
 ```
 
-The script exits immediately with an error if `WEBHOOK_URL` is not set.
+Requirements: Python 3.8+ and `requests`.
 
-## Configuration
+## Schedule
 
-All configuration lives in `main.py`:
+GitHub Actions runs the scraper **daily at 22:30 UTC (06:30 PHT)** — see `.github/workflows/scrape.yml`. You can also trigger it manually from the Actions tab (*Run workflow*).
 
-| Setting | Location | Default |
-|---|---|---|
-| Search keywords | `KEYWORDS` list (top of `main.py`) | `automation`, `n8n`, `make.com`, `zapier` |
-| Jobs kept per keyword | `MAX_JOBS_PER_KEYWORD` | `1` |
-| Webhook URL | `WEBHOOK_URL` environment variable | — (required) |
+## Fair-Use & TOS Notes
 
-## Automated Runs (GitHub Actions)
+This scraper is built to be a good citizen of OnlineJobs.ph:
 
-The included workflow [`.github/workflows/scrape.yml`](.github/workflows/scrape.yml):
+- **Public pages only** — search results and job listings a logged-out visitor sees. No login, no paywalled/premium data, no contact details or resumes.
+- **Human-like pacing** — randomized 5–12s pauses between searches, 2–5s before each detail page, and exponential backoff with retries when the site serves a transient bot-check page (the run degrades gracefully and sends listing teasers instead of hammering).
+- **Tiny daily volume** — one run per day, a handful of requests total (defaults touch ~7 searches + up to 4 detail pages). That's indistinguishable from a person browsing, and far below any load the site cares about.
+- **Public data, credited** — every payload links back to the original listing; nothing is republished, only forwarded to a private notification pipeline.
+- Respects the site's anti-bot interstitials instead of evading them: retry a few times with patience, then give up for this run.
 
-- Runs automatically **every 4 hours** (`0 */4 * * *`)
-- Can be triggered manually anytime via the **Run workflow** button on the Actions tab
-- Injects the webhook URL from the `WEBHOOK_URL` repository secret
+If OnlineJobs.ph ever indicates automated access is unwelcome, discontinue the scraper.
 
-### Setting Up Your Own Fork
+## Repository Layout
 
-1. Go to **Settings → Secrets and variables → Actions → New repository secret**
-2. Name: `WEBHOOK_URL` — Value: your Make.com webhook URL
-3. Make sure **Actions are enabled** on the repository (Settings → Actions)
-4. Trigger a test run: **Actions tab → Run Job Scraper Hourly → Run workflow**
-
-## Notes & Limitations
-
-- Listings are parsed with regex over raw HTML; if OnlineJobs.ph changes its markup, the scraper may return zero results (the fallback link will be sent instead).
-- OnlineJobs.ph hides employer names from logged-out visitors; the real company name is only included when the listing shows an employer logo — otherwise it falls back to `OnlineJobs.ph Employer`.
-- Descriptions are capped at 600 characters (`MAX_DESCRIPTION_CHARS`, cut at a word boundary with an ellipsis) so each notification stays under Telegram's 4096-character message limit once the title, salary, and Apply Now button text are added.
-- Each run makes one extra request per job (for the full description); the random delays keep this polite for the site.
-- OnlineJobs.ph occasionally rate-limits into temporary bot-checks; both search and description fetches retry several times with growing waits before falling back (warnings appear in the Actions log when a teaser is sent instead of the full text).
-- Keep the per-keyword cap and random delays in place to avoid hammering the site or spamming your connected automations.
+- `main.py` — the scraper (requests-only; this is what CI runs)
+- `scraper_onlinejobsph/` — legacy Scrapy project (kept for reference; not used by CI)
+- `.github/workflows/scrape.yml` — daily schedule + manual dispatch
