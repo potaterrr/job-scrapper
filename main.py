@@ -30,6 +30,11 @@ TODAY = datetime.now().strftime('%Y-%m-%d')
 
 DEFAULT_CATEGORIES = 'automation;n8n;make.com;zapier|python|customer support;email support;chat support|virtual assistant'
 
+SEEN_FILE = os.environ.get('SEEN_FILE', 'seen_jobs.json')
+DISCORD_WEBHOOK_URL = os.environ.get('DISCORD_WEBHOOK_URL')
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
+GEMINI_MODEL = os.environ.get('GEMINI_MODEL', 'gemini-1.5-flash')
+
 
 def _env_int(name, default):
   """Read an int env var, treating empty/unset as the default."""
@@ -226,6 +231,92 @@ def build_job(listing, category, full_description):
   }
 
 
+
+
+def load_seen():
+    if os.path.exists(SEEN_FILE):
+        try:
+            with open(SEEN_FILE, 'r', encoding='utf-8') as f:
+                return set(json.load(f))
+        except Exception:
+            return set()
+    return set()
+
+
+def save_seen(seen_set):
+    try:
+        with open(SEEN_FILE, 'w', encoding='utf-8') as f:
+            json.dump(sorted(seen_set), f, indent=2)
+            f.write('\n')
+    except Exception as e:
+        print(f'Failed to save seen cache: {e}')
+
+
+def summarize_job(job):
+    """Use Gemini to produce a concise Discord-friendly summary. Fallback to raw fields."""
+    if not GEMINI_API_KEY:
+        return None
+    prompt = (
+        "Summarize this job listing in 2-4 sentences for a Discord post. "
+        "Include role, key skills, and a one-line 'why it is interesting' hook. "
+        "Do not invent details. Keep it concise and professional.\n\n"
+        f"Title: {job.get('jobTitle','')}\n"
+        f"Company: {job.get('company','')}\n"
+        f"Category: {job.get('category','')}\n"
+        f"Rate: {job.get('rate','')}\n"
+        f"Type: {job.get('employmentType','')}\n"
+        f"Description: {job.get('description','')}\n"
+        f"How to apply: {job.get('howToApply','')}"
+    )
+    url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
+           f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}")
+    try:
+        resp = requests.post(url, json={
+            "contents": [{"parts": [{"text": prompt}]}]
+        }, timeout=30)
+        if resp.status_code != 200:
+            print(f'Gemini error {resp.status_code}: {resp.text[:200]}')
+            return None
+        data = resp.json()
+        text = (data.get('candidates', [{}])[0]
+                .get('content', {}).get('parts', [{}])[0].get('text', ''))
+        return text.strip() or None
+    except Exception as e:
+        print(f'Gemini request failed: {e}')
+        return None
+
+
+def send_discord(job, summary):
+    if not DISCORD_WEBHOOK_URL:
+        print('Error: DISCORD_WEBHOOK_URL is not set.')
+        return False
+    embed = {
+        "title": job.get('jobTitle', 'Job listing'),
+        "url": job.get('url'),
+        "description": (summary or job.get('description', ''))[:4000],
+        "fields": [
+            {"name": "Category", "value": job.get('category', 'N/A'), "inline": True},
+            {"name": "Rate", "value": job.get('rate', 'N/A'), "inline": True},
+            {"name": "Type", "value": job.get('employmentType', 'N/A'), "inline": True},
+            {"name": "Posted", "value": job.get('datePosted') or 'N/A', "inline": True},
+        ],
+    }
+    how = (job.get('howToApply') or '').strip()
+    if how:
+        embed["fields"].append({"name": "How to apply", "value": how[:1024], "inline": False})
+    payload = {"embeds": [embed]}
+    try:
+        resp = requests.post(DISCORD_WEBHOOK_URL, json=payload, timeout=30)
+        if resp.status_code in (200, 204):
+            print(f"Sent to Discord: {job.get('jobTitle')}")
+            return True
+        print(f"Discord failed {resp.status_code}: {resp.text[:200]}")
+        return False
+    except Exception as e:
+        print(f"Discord request failed: {e}")
+        return False
+
+
 def fetch_jobs(categories):
   jobs = []
   seen_urls = set()
@@ -267,11 +358,9 @@ def fetch_jobs(categories):
 
 def main():
   dry_run = os.environ.get('DRY_RUN') == '1'
-  webhook_url = os.environ.get('WEBHOOK_URL')
-  if not webhook_url and not dry_run:
-    print("Error: WEBHOOK_URL environment variable is not set.")
-    print("Set it to your Make.com webhook URL, e.g.:")
-    print('  export WEBHOOK_URL="https://hook.us2.make.com/your-hook-id"')
+  if not DISCORD_WEBHOOK_URL and not dry_run:
+    print("Error: DISCORD_WEBHOOK_URL environment variable is not set.")
+    print("Set it to your Discord channel webhook URL.")
     print("Or set DRY_RUN=1 to preview payloads without sending.")
     sys.exit(1)
 
@@ -299,13 +388,31 @@ def main():
         'howToApply': '',
     })
 
-  print(f'Sending {len(jobs)} jobs to Make.com...')
-  for job in jobs:
+  seen = load_seen()
+  new_jobs = [j for j in jobs if j.get('url') not in seen]
+
+  if not new_jobs:
+    print('No new jobs found.')
+    if not dry_run and DISCORD_WEBHOOK_URL:
+      requests.post(DISCORD_WEBHOOK_URL, json={
+          "content": "No new job listings this run."
+      }, timeout=30)
+    return
+
+  print(f'Sending {len(new_jobs)} new jobs to Discord...')
+  for job in new_jobs:
     if dry_run:
       print(json.dumps(job, indent=2))
+      summary = summarize_job(job)
+      if summary:
+        print(f"AI summary: {summary}")
       continue
-    response = requests.post(webhook_url, json=job, timeout=30)
-    print(f"Sent: {job['jobTitle']} | Status: {response.status_code}")
+    summary = summarize_job(job)
+    if send_discord(job, summary):
+      if job.get('url'):
+        seen.add(job['url'])
+        save_seen(seen)
+    time.sleep(1.5)
 
 
 if __name__ == '__main__':
